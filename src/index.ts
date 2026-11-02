@@ -1,16 +1,13 @@
+// src/index.ts
 import express from 'express';
+import { logger, notFound, errorHandler } from './middleware.js';
 
 const app = express();
 
-// Body parser JSON
 app.use(express.json());
 
-app.get('/', (_req, res) => {
-  res.json({
-    message: 'API berjalan',
-    health: '/health'
-  });
-});
+// 1. Pasang Logger di paling atas
+app.use(logger);
 
 // Inisiasi 6: Endpoint /health
 app.get('/health', (_req, res) => {
@@ -19,6 +16,12 @@ app.get('/health', (_req, res) => {
     message: "Sukses"
   });
 });
+
+// --- ROUTE FITUR 2 (HERO) DAN FITUR LAINNYA DI-IMPORT DI SINI NANTI ---
+
+// 2. Pasang Not Found & Error Handler di paling bawah
+app.use(notFound);
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
