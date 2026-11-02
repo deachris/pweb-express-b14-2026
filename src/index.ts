@@ -1,6 +1,7 @@
 // src/index.ts
 import express from 'express';
 import { logger, notFound, errorHandler } from './middleware.js';
+import heroRoutes from "./routes/hero.routes.js";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.get('/health', (_req, res) => {
 });
 
 // --- ROUTE FITUR 2 (HERO) DAN FITUR LAINNYA DI-IMPORT DI SINI NANTI ---
+app.use("/api/heroes", heroRoutes);
 
 // 2. Pasang Not Found & Error Handler di paling bawah
 app.use(notFound);
