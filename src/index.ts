@@ -1,4 +1,3 @@
-// src/index.ts
 import express from 'express';
 import { logger, notFound, errorHandler } from './middleware.js';
 import heroRoutes from "./routes/hero.routes.js";
