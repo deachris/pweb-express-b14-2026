@@ -16,7 +16,7 @@ export const topUp = async (req: Request, res: Response) => {
   const { amount } = req.body ?? {};
 
   if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
-    throw new HttpError(400, "amount harus bilangan bulat lebih dari 0");
+    throw new HttpError(400, "amount harus bilangan bulat positif");
   }
 
   const id = await findPlayerId(req.params.player_id);

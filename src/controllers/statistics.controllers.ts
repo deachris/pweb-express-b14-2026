@@ -15,7 +15,7 @@ export const getStatistics = async (_req: Request, res: Response) => {
     prisma.hero.groupBy({
       by: ["role"],
       _count: { role: true },
-      orderBy: { role: "asc" },
+      orderBy: [{ _count: { role: "desc" } }, { role: "asc" }],
     }),
   ]);
 

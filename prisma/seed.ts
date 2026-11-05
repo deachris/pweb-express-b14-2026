@@ -1,147 +1,82 @@
 import { readFile } from "node:fs/promises";
-import { Lane, Rarity, Role } from "@prisma/client";
-import { parse } from "csv-parse/sync";
+import { join } from "node:path";
 import { prisma } from "../src/lib/prisma.js";
 
-type HeroSeedRow = {
-    name: string;
-    primaryRole: string;
-    primaryLane: string;
-    releaseYear: number;
-    priceBP: number | null;
-    priceDiamond: number | null;
+type HeroJson = {
+  name: string;
+  primaryRole: any;
+  primaryLane: any;
+  releaseYear: number;
+  priceBP: number | null;
+  priceDiamond: number | null;
 };
 
-type SkinCsvRow = {
-    name: string;
-    heroId: string;
-    rarity: string;
-    priceDiamond: string;
+type SkinJson = {
+  name: string;
+  heroId: number;
+  rarity: any;
+  priceDiamond: number | null;
 };
 
-const isOptionalPrice = (value: unknown) =>
-    value === null ||
-    (typeof value === "number" && Number.isInteger(value) && value >= 0);
+const readJson = async <T>(file: string): Promise<T> =>
+  JSON.parse(await readFile(join(process.cwd(), "data", file), "utf-8"));
 
-const main = async () => {
-    const [heroesJson, skinsCsv] = await Promise.all([
-        readFile(new URL("../heroes.json", import.meta.url), "utf8"),
-        readFile(new URL("./skins.csv", import.meta.url), "utf8"),
-    ]);
+async function main() {
+  const heroes = await readJson<HeroJson[]>("heroes.json");
+  const skins = await readJson<SkinJson[]>("skins.json");
 
-    const heroes = JSON.parse(heroesJson) as HeroSeedRow[];
-    const skinRows = parse<SkinCsvRow>(skinsCsv, {
-        bom: true,
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-    });
+  await prisma.$executeRawUnsafe(
+    `TRUNCATE "PlayerHero", "Player", "Skin", "Hero" RESTART IDENTITY CASCADE`
+  );
 
-    if (heroes.length === 0) {
-        throw new Error("Dataset hero kosong");
-    }
+  await prisma.hero.createMany({
+    data: heroes.map((h) => ({
+      name: h.name,
+      role: String(h.primaryRole).toUpperCase() as any,
+      lane: String(h.primaryLane).toUpperCase() as any,
+      releaseYear: h.releaseYear,
+      priceBP: h.priceBP ?? null,
+      priceDiamond: h.priceDiamond ?? null,
+    })),
+  });
 
-    const heroData = heroes.map((hero, index) => {
-        const role = hero.primaryRole.toUpperCase();
-        const lane = hero.primaryLane.toUpperCase();
-        if (
-            !Object.values(Role).includes(role as Role) ||
-            !Object.values(Lane).includes(lane as Lane) ||
-            !Number.isInteger(hero.releaseYear) ||
-            !isOptionalPrice(hero.priceBP) ||
-            !isOptionalPrice(hero.priceDiamond)
-        ) {
-            throw new Error(`Data hero pada urutan ${index + 1} tidak valid`);
-        }
+  await prisma.skin.createMany({
+    data: skins.map((s) => ({
+      name: s.name,
+      heroId: s.heroId,
+      rarity: String(s.rarity).toUpperCase() as any,
+      priceDiamond: s.priceDiamond ?? null,
+    })),
+  });
 
-        return {
-            name: hero.name,
-            role: role as Role,
-            lane: lane as Lane,
-            releaseYear: hero.releaseYear,
-            priceBP: hero.priceBP,
-            priceDiamond: hero.priceDiamond,
-        };
-    });
+  await prisma.player.createMany({
+    data: [
+      { nickname: "ArekITS", bp: 1500, diamond: 75 },
+      { nickname: "SangPushRank", bp: 13000, diamond: 2892 },
+      { nickname: "MageSurabaya", bp: 10000, diamond: 0 },
+    ],
+  });
 
-    const skinData = skinRows.map((row, index) => {
-        const sourceHeroId = Number(row.heroId);
-        const rarity = row.rarity.toUpperCase();
-        const priceDiamond =
-            row.priceDiamond === "" ? null : Number(row.priceDiamond);
+  await prisma.playerHero.createMany({
+    data: [
+      { playerId: 1, heroId: 18, currency: "BP", pricePaid: 2000 },
+      { playerId: 1, heroId: 1, currency: "BP", pricePaid: 10800 },
+      { playerId: 2, heroId: 84, currency: "DIAMOND", pricePaid: 599 },
+      { playerId: 2, heroId: 56, currency: "BP", pricePaid: 32000 },
+    ],
+  });
 
-        if (
-            !row.name ||
-            !Number.isInteger(sourceHeroId) ||
-            sourceHeroId < 1 ||
-            sourceHeroId > heroes.length ||
-            !Object.values(Rarity).includes(rarity as Rarity) ||
-            !isOptionalPrice(priceDiamond)
-        ) {
-            throw new Error(`Data skin pada baris ${index + 2} tidak valid`);
-        }
-
-        return {
-            name: row.name,
-            sourceHeroId,
-            rarity: rarity as Rarity,
-            priceDiamond,
-        };
-    });
-
-    await prisma.hero.createMany({ data: heroData, skipDuplicates: true });
-
-    const savedHeroes = await prisma.hero.findMany({
-        where: { name: { in: heroData.map(({ name }) => name) } },
-        select: { id: true, name: true },
-    });
-    const heroIdByName = new Map(
-        savedHeroes.map((hero) => [hero.name, hero.id]),
-    );
-    const skinsToSeed = skinData.map((skin) => {
-        const sourceHero = heroes[skin.sourceHeroId - 1];
-        const heroId = sourceHero ? heroIdByName.get(sourceHero.name) : undefined;
-        if (heroId === undefined) {
-            throw new Error(
-                `Hero untuk heroId ${skin.sourceHeroId} tidak ditemukan`,
-            );
-        }
-
-        return {
-            name: skin.name,
-            heroId,
-            rarity: skin.rarity,
-            priceDiamond: skin.priceDiamond,
-        };
-    });
-
-    const existingSkins = await prisma.skin.findMany({
-        select: { name: true, heroId: true, rarity: true, priceDiamond: true },
-    });
-    const skinKey = (skin: (typeof skinsToSeed)[number]) =>
-        JSON.stringify([
-            skin.name,
-            skin.heroId,
-            skin.rarity,
-            skin.priceDiamond,
-        ]);
-    const existingKeys = new Set(existingSkins.map(skinKey));
-    const newSkins = skinsToSeed.filter((skin) => !existingKeys.has(skinKey(skin)));
-
-    if (newSkins.length > 0) {
-        await prisma.skin.createMany({ data: newSkins });
-    }
-
-    console.log(
-        `Seed selesai: ${heroData.length} hero tersedia; ${newSkins.length} skin ditambahkan.`,
-    );
-};
+  const [h, s, p] = await Promise.all([
+    prisma.hero.count(),
+    prisma.skin.count(),
+    prisma.player.count(),
+  ]);
+  console.log(`Seed berhasil: ${h} hero, ${s} skin, ${p} player`);
+}
 
 main()
-    .catch((error: unknown) => {
-        console.error("Seed gagal:", error);
-        process.exitCode = 1;
-    })
-    .finally(async () => {
-        await prisma.$disconnect();
-    });
+  .catch((e) => {
+    console.error("Seed gagal:", e);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());
